@@ -1,0 +1,193 @@
+--------------------------------------------------[ FUNCTIONS/STORED PROCEDURES ]--------------------------------------------------
+
+-- FUNÇÃO que retorna quanto uma determinada track (informada como parâmetro) teve de lucro (o quanto ela foi vendida e o valor arrecadado)
+-- Motivo: Saber o valor individual de uma determinada faixa
+
+CREATE OR REPLACE FUNCTION MUSIC_PROFIT(id INT) RETURNS TABLE (quant INT, profit NUMERIC) AS
+$$
+BEGIN
+	RETURN QUERY
+	
+	SELECT quantity, (invoice_line.unit_price * quantity) FROM invoice_line 
+	inner join track on invoice_line.track_id = track.track_id
+	where track.track_id = id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- FUNÇÃO que retorna todas as músicas de um determinado artista (informado como parâmetro)
+-- Motivo: Pesquisa em um banco de dados das músicas de artista X
+
+CREATE OR REPLACE FUNCTION MUSICS(id INT) RETURNS TABLE (track VARCHAR(200)) AS
+$$
+BEGIN
+	RETURN QUERY
+	
+	SELECT track.name FROM track 
+	inner join album on track.album_id=album.album_id
+	inner join artist on artist.artist_id = album.artist_id
+	where artist.artist_id = id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- STORED PROCEDURE para inserir, editar e deletar uma track
+-- Motivo: Facilitar a inserção, remoção e edição de múltiplos dados
+
+CREATE OR REPLACE PROCEDURE CRUD_TRACK(
+id INT, track_name TEXT,album INT, media INT,genre INT,t_composer TEXT,
+	t_milliseconds INT,t_bytes INT,price NUMERIC, opcao INT) AS $$
+BEGIN
+	
+	--OPCAO 1: INSERÇÃO
+	IF opcao = 1 THEN
+		INSERT INTO TRACK(track_id, name, album_id, media_type_id, genre_id, composer,
+						   milliseconds, bytes, unit_price)
+		VALUES(id,track_name, album, media, genre, t_composer, t_milliseconds, t_bytes, price);
+	--OPÇÃO -1: REMOÇÃO
+	ELSIF opcao = -1 THEN
+		DELETE FROM TRACK WHERE track_id = id;
+	--OPÇÃO 0: UPDATE
+	ELSIF opcao = 0 THEN
+		UPDATE TRACK SET
+			name = track_name, 
+			album_id = album, 
+			media_type_id = media, 
+			genre_id = genre, 
+			composer = t_composer,
+			milliseconds = t_milliseconds, 
+			bytes = t_bytes, 
+			unit_price = price 
+		WHERE track_id = id;
+	END IF;
+END;
+$$ LANGUAGE PLPGSQL;
+
+--------------------------------------------------[ TRIGGERS ]--------------------------------------------------
+
+-- TRIGGER para atualizar automaticamente a data de contratação de um funcionário recém inserido para o dia atual (caso esta não seja informada na inserção)
+
+CREATE OR REPLACE FUNCTION atualiza_data_contratacao()
+RETURNS trigger AS $$
+BEGIN
+	IF NEW.hire_date IS NULL THEN
+		UPDATE employee
+		SET hire_date = CURRENT_DATE
+		WHERE employee_id = NEW.employee_id;
+	END IF;
+
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+	
+CREATE TRIGGER atualiza_data_contratacao_trig AFTER INSERT ON employee
+FOR EACH ROW EXECUTE FUNCTION atualiza_data_contratacao();
+
+
+-- TRIGGER para, caso haja alteração em um invoice_line, o valor total do invoice ao qual ele está associado é recalculado
+
+CREATE OR REPLACE FUNCTION corrige_total()
+RETURNS trigger AS $$
+DECLARE
+	diferenca FLOAT;
+BEGIN
+	diferenca := NEW.unit_price * NEW.quantity - OLD.unit_price * OLD.quantity;
+	
+	UPDATE invoice
+	SET total = total + diferenca
+	WHERE invoice.invoice_id = NEW.invoice_id;
+
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+	
+CREATE TRIGGER corrige_total_trig AFTER UPDATE ON invoice_line
+FOR EACH ROW EXECUTE FUNCTION corrige_total();
+
+
+-- TRIGGER para impedir que as informações de funcionário sejam atualizadas para não conter nem email e nem telefone (ele mantem pelo menos um), já que assim se perderia qualquer meio de contato
+
+CREATE OR REPLACE FUNCTION impede_perda_contato()
+RETURNS trigger AS $$
+BEGIN
+	IF NEW.phone IS NULL AND NEW.email IS NULL THEN
+		IF OLD.email IS NOT NULL THEN
+			NEW.email = OLD.email;
+		ELSIF OLD.phone IS NOT NULL THEN
+			NEW.phone = OLD.phone;
+		END IF;
+	END IF;
+
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+	
+CREATE TRIGGER impede_perda_contato_trig BEFORE UPDATE ON employee
+FOR EACH ROW EXECUTE FUNCTION impede_perda_contato();
+
+--------------------------------------------------[ CURSORS ]--------------------------------------------------
+
+-- Um CURSOR que passa pelos emails dos clientes e checa se algum deles n é válido (deve ter @, nome, domínio com uma divisão por ponto)
+
+CREATE OR REPLACE FUNCTION checaEmail()
+RETURNS void AS $$
+DECLARE
+	cursor_cliente CURSOR FOR SELECT * from CUSTOMER;
+BEGIN
+	FOR cliente IN cursor_cliente LOOP
+		IF cliente.email NOT LIKE '%@%.%'
+		THEN	
+			RAISE NOTICE 'Nome: %', cliente.first_name;
+		END IF;
+	END LOOP;
+END;
+$$LANGUAGE plpgsql;
+
+
+-- Um CURSOR para corrigir o erro de funcionários que não tem supervisores (e não é o gerente geral), atribuindo o gerente geral como seus supervisores
+
+CREATE OR REPLACE FUNCTION corrigeFaltaDeSuperior()
+RETURNS void AS $$
+DECLARE
+	gerente_geral INT;
+	cursor_funcionario CURSOR FOR SELECT * from employee WHERE title IS NULL OR title <> 'General Manager';
+BEGIN
+	SELECT employee_id
+	INTO gerente_geral
+	FROM employee
+	WHERE title = 'General Manager'
+	LIMIT 1;
+	
+	FOR funcionario IN cursor_funcionario LOOP
+		IF funcionario.reports_to IS NULL
+		THEN	
+			UPDATE employee
+			SET reports_to = gerente_geral
+			WHERE employee_id = funcionario.employee_id;
+		END IF;
+	END LOOP;
+END;
+$$LANGUAGE plpgsql;
+
+--------------------------------------------------[ VIEWS ]--------------------------------------------------
+
+-- VIEW para JOIN entre tracks, playlist_track e playlist para saber quais tracks há em uma playlist.
+-- Motivo: Ter uma “foto” das playlists e suas respectivas músicas.
+
+CREATE VIEW tracks_in_playlists 
+AS
+	SELECT p.name AS Playlist, t.name AS Track
+	FROM playlist p
+	JOIN playlist_track pt ON p.playlist_id = pt.playlist_id
+	JOIN Track t ON pt.track_id = t.track_id;
+
+
+-- VIEW para JOIN entre track, álbum e genre para saber quais estilos musicais estão presentes dentro de um determinado álbum.
+-- Motivo: Ter fácil acesso aos estilos musicais em cada album
+
+CREATE VIEW album_genres 
+AS
+	SELECT al.title AS Album, g.name AS Genre
+	FROM album al
+	JOIN track t ON al.album_id = t.album_id
+	JOIN genre g ON t.genre_id = g.genre_id;

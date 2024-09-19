@@ -1,0 +1,94 @@
+--------------------------------------------------[ JOINS ]--------------------------------------------------
+
+-- JOIN (com count) entre artista e álbum para saber quantos álbuns o artista X possui
+-- Motivo: Para contabilizar quantos álbuns o artista possui 
+
+SELECT a.name AS Artista, COUNT(al.album_id) AS Total_Albuns
+FROM artist a
+JOIN album al ON a.artist_id = al.artist_id
+WHERE a.name = 'AC/DC'
+GROUP BY a.name;
+
+
+-- JOIN (com count) entre álbum e faixa de música (track) para saber quantas músicas há em determinado álbum
+-- Motivo: Para contabilização de músicas de um determinado álbum.
+
+SELECT al.title AS Album, COUNT(t.track_id) AS Total_Musicas
+FROM album al
+JOIN track t ON al.album_id = t.album_id
+WHERE al.title = 'For Those About To Rock We Salute You'
+GROUP BY al.title;
+
+
+--JOIN entre track, álbum e genre para saber quais estilos musicais estão presentes dentro de um determinado álbum
+-- Motivo: Saber quais estilos musicais estão majoritariamente presentes em determinado álbum
+
+SELECT al.title AS Album, g.name AS Estilo_Musical
+FROM album al
+JOIN track t ON al.album_id = t.album_id
+JOIN genre g ON t.genre_id = g.genre_id
+WHERE al.title = 'For Those About To Rock We Salute You'
+GROUP BY al.title, g.name;
+
+
+-- JOIN (com sum) entre customer e invoice para saber o total gasto de cada cliente na loja
+-- Motivo: Saber qual o cliente que mais consumiu e gastou na loja
+
+SELECT c.first_name, c.last_name, SUM(i.total) AS total_Gasto
+FROM customer c
+JOIN invoice i ON c.customer_id = i.customer_id
+GROUP BY c.first_name, c.last_name
+ORDER BY total_gasto DESC;
+
+
+--JOIN (com count) entre customer e employee para saber o empregado que mais atendeu clientes
+--Motivo: Saber o funcionário que mais trabalhou para fornecer compensações por metas de vendas
+
+SELECT e.first_name, e.last_name, COUNT(c.customer_id) AS clientes_atendidos
+FROM employee e
+JOIN customer c ON e.employee_id = c.support_rep_id
+GROUP BY e.first_name, e.last_name
+ORDER BY clientes_atendidos DESC;
+
+
+-- JOIN entre tracks, playlist_track e playlist para saber quais tracks há em uma playlist
+-- Motivo: Saber quais músicas estão presentes em uma playlist
+
+SELECT p.name AS playlist, t.name AS Faixa
+FROM playlist p
+JOIN playlist_track pt ON p.playlist_id = pt.playlist_id
+JOIN track t ON pt.track_id = t.track_id
+WHERE p.name = '90’s Music';
+
+--------------------------------------------------[ SUBQUERIES ]--------------------------------------------------
+
+-- SUBQUERIE para saber por quais funcionários cada gerente é responsável
+-- Motivo: É a única forma de conseguir ver a relação entre um gerente e seus subordinados por fazerem parte de um relacionamento unário da tabela employee
+
+SELECT results.title, results.first_name, employee.title, employee.first_name
+FROM employee
+JOIN (SELECT employee_id, title, first_name FROM employee) AS results
+ON employee.reports_to = results.employee_id;
+
+
+-- SUBQUERIE para selecionar os gerentes presentes na tabela employee e para quem eles respondem (reportam)
+
+SELECT *
+FROM employee
+WHERE employee_id IN (SELECT reports_to
+	FROM employee
+	WHERE reports_to IS NOT NULL);
+
+
+-- SUBQUERIE para saber o valor arrecadado por cada empregado e saber o que mais arrecadou
+-- Motivo: Saber o empregado com maior lucro de vendas para fornecer compensações por metas de vendas
+
+SELECT employee.first_name, SUM(results.total)
+FROM employee
+JOIN (SELECT customer.support_rep_id, invoice.total
+	FROM customer
+	JOIN invoice
+	ON customer.customer_id = invoice.customer_id) AS results
+ON employee.employee_id = results.support_rep_id
+GROUP BY employee.employee_id
+ORDER BY SUM(results.total) DESC;
